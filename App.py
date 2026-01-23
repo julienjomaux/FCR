@@ -11,7 +11,7 @@ import matplotlib.pyplot as plt
 from calendar import month_abbr
 
 # ---------------- Page setup ----------------
-st.set_page_config(page_title="FCR — Price Heatmap, Demand & Day View", layout="wide")
+st.set_page_config(page_title="FCR — Price Heatmap", layout="wide")
 
 # Years you want to expose in the UI (adapt if you add more files)
 YEARS = [2021, 2022, 2023, 2024, 2025]
@@ -368,8 +368,7 @@ if submitted:
         st.error('Incorrect login credentials.')
 
 # ---------------- UI ----------------
-st.title("FCR — Price Heatmap, Demand (All Countries), and Specific-Day View")
-st.caption("Reads local Excel files named: RESULT_OVERVIEW_CAPACITY_MARKET_FCR_YYYY.xlsx")
+st.title("FCR — Price Heatmap")
 
 # Sidebar controls (available regardless), visualizations are gated below
 with st.sidebar:
@@ -546,6 +545,7 @@ else:
       If you prefer sum or a specific intraday slice, let me know.
     """
     )
+
 
 
 
