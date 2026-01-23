@@ -4,6 +4,7 @@ import glob
 from typing import Optional, List, Dict
 from datetime import date
 
+import numpy as np
 import pandas as pd
 import streamlit as st
 import seaborn as sns
@@ -17,7 +18,7 @@ st.set_page_config(page_title="FCR — Price Heatmap, Demand & Day View", layout
 YEARS = [2021, 2022, 2023, 2024, 2025]
 
 # Where to look for the Excel files.
-# The app will first try the current folder, then a ./data subfolder.
+# The app will first try the current folder, then in ./data subfolder.
 FILENAME_PATTERN = "RESULT_OVERVIEW_CAPACITY_MARKET_FCR_{y}.xlsx"
 SEARCH_LOCATIONS = ["", "data"]  # "" = current folder
 
@@ -31,7 +32,6 @@ COUNTRY_RENAME = {
     'SI': 'SLOVENIA', 'SLOVENIA': 'SLOVENIA',
     'DK': 'DENMARK', 'DENMARK': 'DENMARK',
     'CH': 'SWITZERLAND', 'SWITZERLAND': 'SWITZERLAND',
-    # Any non-country labels that may appear will be filtered later (e.g., CROSSBORDER)
 }
 
 NON_COUNTRIES = {"CROSSBORDER", "CROSS-BORDER"}  # filtered out from lists/charts
@@ -113,7 +113,7 @@ METRICS: Dict[str, Dict] = {
         ],
         "unit": "MW",
         "cmap": "coolwarm",
-        "center": 0.0,  # Diverging map centered at 0 to show import(-) vs export(+)
+        "center": 0.0,  # diverging, centered at 0
         "title_suffix": "Average Import(−)/Export(+) FCR",
     },
 }
@@ -132,7 +132,6 @@ def extract_countries_from_df(df: pd.DataFrame) -> List[str]:
         col_str = str(col)
         for suf in all_suffixes:
             if col_str.endswith(suf):
-                # prefix is the part before first underscore
                 prefix = col_str.split('_')[0]
                 label = harmonize_country(prefix)
                 if label not in NON_COUNTRIES:
@@ -307,6 +306,58 @@ def specific_day_bar_data(df: pd.DataFrame, the_date: date, country: str, metric
     grouped = grouped.rename(columns={metric_col: 'Value'})[['Product', 'Value']]
     return grouped
 
+# ---------- Safe config getter (supports python-decouple and env vars) ----------
+def get_config_value(key: str, default: Optional[str] = None) -> Optional[str]:
+    # Try python-decouple if available; fallback to environment variables
+    try:
+        from decouple import config as decouple_config  # type: ignore
+        return decouple_config(key, default=default)
+    except Exception:
+        return os.getenv(key, default)
+
+# ---------------- Top: Sign-up / Login section ----------------
+stripe_link = get_config_value('STRIPE_CHECKOUT_LINK', '#')
+secret_password = get_config_value('SECRET_PASSWORD', '')
+
+st.markdown(
+    f"""
+    If you want to access all the apps of GEM Energy Analytics, please sign up following the link below. 
+
+    Currently, the fee is 30 € per month. When the payment is done, you will receive an password that will grant you access to all apps. Every month, you will receive an email with a new password to access the apps (except if you unsubscribe). 
+    Feel free to reach out at Julien.jomaux@gmail.com
+
+    #### Sign Up Now :metal:
+    """
+)
+
+with st.form("login_form"):
+    st.write("Login")
+    email = st.text_input('Enter Your Email')
+    password = st.text_input('Enter Your Password', type="password")
+    submitted = st.form_submit_button("Login")
+
+if submitted:
+    if secret_password and (password == secret_password):
+        st.session_state['logged_in'] = True
+        st.text('Succesfully Logged In!')
+    else:
+        st.text('Incorrect, login credentials.')
+        st.session_state['logged_in'] = False
+
+if 'logged_in' in st.session_state.keys():
+    if st.session_state['logged_in']:
+        # Add a slider widget
+        number = st.slider("Pick a number", 0, 100, 25)
+        st.write(f"You selected: {number}")
+        
+        # Display a simple line chart with random data
+        st.subheader("Random Data Chart")
+        data = pd.DataFrame(
+            np.random.randn(10, 2),
+            columns=['col1', 'col2']
+        )
+        st.line_chart(data)
+
 # ---------------- UI ----------------
 st.title("FCR — Price Heatmap, Demand (All Countries), and Specific-Day View")
 st.caption("Reads local Excel files named: RESULT_OVERVIEW_CAPACITY_MARKET_FCR_YYYY.xlsx")
@@ -358,8 +409,8 @@ with st.sidebar:
 
     # Specific date for the third chart
     # Limit the date picker to the available dates in this year's file
-    min_d = pd.to_datetime(df_year['DATE'].min()).date() if not df_year.empty else date(year, 1, 1)
-    max_d = pd.to_datetime(df_year['DATE'].max()).date() if not df_year.empty else date(year, 12, 31)
+    min_d = pd.to_datetime(df_year['DATE'].min()).date() if not df_year.empty and pd.notna(df_year['DATE'].min()) else date(year, 1, 1)
+    max_d = pd.to_datetime(df_year['DATE'].max()).date() if not df_year.empty and pd.notna(df_year['DATE'].max()) else date(year, 12, 31)
     default_day = min(max_d, max(min_d, date(year, 1, 1)))
     chosen_day = st.date_input(
         "Specific date (for day bar chart)",
@@ -389,6 +440,11 @@ with st.container():
             cbar_kws={'label': unit},
             ax=ax
         )
+
+        # ----- Watermark banner on the heatmap -----
+        ax.text(0.5, 0.5, "gemenergyanalytics.substack.com - Julien Jomaux",
+                color='gray', fontsize=40, alpha=0.3, ha='center', va='center',
+                rotation=30, transform=ax.transAxes, zorder=1)
 
         ax.set_xticks([i + 0.5 for i in range(len(heatmap_data.columns))])
         ax.set_xticklabels(x_labels_bins, rotation=45, ha='right')
