@@ -216,14 +216,14 @@ def build_heatmap_for(df: pd.DataFrame, year: int, country: str, metric_key: str
     heatmap = merged.pivot(index='MONTH_NAME', columns='PRODUCTNAME', values=metric_col)
     heatmap = heatmap.reindex(index=months_label, columns=products)
 
-   x_labels_bins = [
+    x_labels_bins = [
     "0 to 4",
     "4 to 8",
     "8 to 12",
     "12 to 16",
     "16 to 20",
     "20 to 24"
-]
+    ]
 
     spec = METRICS[metric_key]
     unit = spec["unit"]
@@ -546,6 +546,7 @@ else:
       If you prefer sum or a specific intraday slice, let me know.
     """
     )
+
 
 
 
