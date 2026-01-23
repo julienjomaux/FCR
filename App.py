@@ -448,7 +448,7 @@ else:
             
             sns.heatmap(
                 heatmap_data,
-                annot=true,
+                annot=True,
                 cmap=cmap,
                 center=center,
                 cbar_kws={'label': unit},
@@ -545,6 +545,7 @@ else:
       If you prefer sum or a specific intraday slice, let me know.
     """
     )
+
 
 
 
