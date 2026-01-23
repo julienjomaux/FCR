@@ -331,8 +331,10 @@ st.markdown(
     """
 This app presents heatmaps and daily views of FCR from 201 to 2025. 
 
-- **Heatmaps:** Show monthly average, maximal average, and maximal marginal capacity prices per month and 4-hour product.
-- **Daily view:** Displays capacity prices for all 12 products for a selected day.
+- **Heatmaps:** Show monthly average per product with the sidebar. 
+- **Daily view:** Displays capacity prices for all the blocks. 
+
+You can change the considered country and the year easily. 
 
 **Data source:** [Regelleistung.net](https://www.regelleistung.net/)
 
@@ -504,7 +506,7 @@ else:
     # ---------------- 3) Specific-date bar chart (Price or Import/Export) ----------------
     with st.container():
         metric_label = METRICS[metric_key]["label"]
-        unit_label = METRICS[metric_key]["unit"]
+        unit_label = "€/MW/block"
         st.subheader(f"{metric_label} — {country} — {chosen_day.isoformat()}")
         st.markdown(
             """
@@ -532,6 +534,7 @@ else:
             st.pyplot(fig3)
 
     
+
 
 
 
