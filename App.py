@@ -445,11 +445,10 @@ else:
         else:
             fig, ax = plt.subplots(figsize=(11, 6))
             sns.set(style="white")
-            annot = heatmap_data.round(0).astype('Int64').astype(str)
-            annot = annot.replace('<NA>', '')  # Remove unnecessary NA string annotations
+            
             sns.heatmap(
                 heatmap_data,
-                annot=annot,
+                annot=true,
                 cmap=cmap,
                 center=center,
                 cbar_kws={'label': unit},
@@ -546,6 +545,7 @@ else:
       If you prefer sum or a specific intraday slice, let me know.
     """
     )
+
 
 
 
