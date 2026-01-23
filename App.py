@@ -4,7 +4,6 @@ import glob
 from typing import Optional, List, Dict
 from datetime import date
 
-import numpy as np
 import pandas as pd
 import streamlit as st
 import seaborn as sns
@@ -332,37 +331,23 @@ st.markdown(
 
 with st.form("login_form"):
     st.write("Login")
-    email = st.text_input('Enter Your Email')
+    # Email removed as requested; password only
     password = st.text_input('Enter Your Password', type="password")
     submitted = st.form_submit_button("Login")
 
 if submitted:
     if secret_password and (password == secret_password):
         st.session_state['logged_in'] = True
-        st.text('Succesfully Logged In!')
+        st.success('Successfully Logged In!')
     else:
-        st.text('Incorrect, login credentials.')
         st.session_state['logged_in'] = False
-
-if 'logged_in' in st.session_state.keys():
-    if st.session_state['logged_in']:
-        # Add a slider widget
-        number = st.slider("Pick a number", 0, 100, 25)
-        st.write(f"You selected: {number}")
-        
-        # Display a simple line chart with random data
-        st.subheader("Random Data Chart")
-        data = pd.DataFrame(
-            np.random.randn(10, 2),
-            columns=['col1', 'col2']
-        )
-        st.line_chart(data)
+        st.error('Incorrect login credentials.')
 
 # ---------------- UI ----------------
 st.title("FCR — Price Heatmap, Demand (All Countries), and Specific-Day View")
 st.caption("Reads local Excel files named: RESULT_OVERVIEW_CAPACITY_MARKET_FCR_YYYY.xlsx")
 
-# Sidebar controls
+# Sidebar controls (available regardless), visualizations are gated below
 with st.sidebar:
     # Year
     year_default_index = len(YEARS) - 1 if YEARS else 0
@@ -419,106 +404,112 @@ with st.sidebar:
         max_value=max_d
     )
 
-# ---------------- 1) Main heatmap (Price or Import/Export) ----------------
-with st.container():
-    heatmap_data, x_labels_bins, months_label, unit, cmap, center, title_suffix = build_heatmap_for(
-        df_year, year, country, metric_key
-    )
+# --------------- GATED CONTENT: only visible after successful login ---------------
+is_logged_in = st.session_state.get('logged_in', False)
 
-    st.subheader(f"{title_suffix} — {country} — {year}")
-    if heatmap_data is None or heatmap_data.empty:
-        st.warning("No data found for this selection (metric & country).")
-    else:
-        fig, ax = plt.subplots(figsize=(11, 6))
-        sns.set(style="white")
-
-        sns.heatmap(
-            heatmap_data,
-            annot=False,
-            cmap=cmap,
-            center=center,
-            cbar_kws={'label': unit},
-            ax=ax
+if not is_logged_in:
+    st.info("🔒 Please log in with the password above to access the charts.")
+else:
+    # ---------------- 1) Main heatmap (Price or Import/Export) ----------------
+    with st.container():
+        heatmap_data, x_labels_bins, months_label, unit, cmap, center, title_suffix = build_heatmap_for(
+            df_year, year, country, metric_key
         )
 
-        # ----- Watermark banner on the heatmap -----
-        ax.text(0.5, 0.5, "gemenergyanalytics.substack.com - Julien Jomaux",
-                color='gray', fontsize=40, alpha=0.3, ha='center', va='center',
-                rotation=30, transform=ax.transAxes, zorder=1)
+        st.subheader(f"{title_suffix} — {country} — {year}")
+        if heatmap_data is None or heatmap_data.empty:
+            st.warning("No data found for this selection (metric & country).")
+        else:
+            fig, ax = plt.subplots(figsize=(11, 6))
+            sns.set(style="white")
 
-        ax.set_xticks([i + 0.5 for i in range(len(heatmap_data.columns))])
-        ax.set_xticklabels(x_labels_bins, rotation=45, ha='right')
-        ax.set_yticks([i + 0.5 for i in range(len(heatmap_data.index))])
-        ax.set_yticklabels(months_label, rotation=0)
-        ax.set_xlabel('')
-        ax.set_ylabel('')
-        plt.tight_layout()
-        st.pyplot(fig)
+            sns.heatmap(
+                heatmap_data,
+                annot=False,
+                cmap=cmap,
+                center=center,
+                cbar_kws={'label': unit},
+                ax=ax
+            )
 
-# ---------------- 2) Demand bar chart (all countries together) ----------------
-with st.container():
-    st.subheader(f"Demand per country — Yearly average — {year}")
-    demand_df = demand_bar_data(df_year, year)
-    if demand_df is None or demand_df.empty:
-        st.info("No Demand data found for this year.")
-    else:
-        fig2, ax2 = plt.subplots(figsize=(11, 6))
-        sns.set(style="whitegrid")
-        sns.barplot(
-            data=demand_df,
-            x="Country",
-            y="Demand (MW)",
-            palette="Blues_d",
-            ax=ax2
-        )
-        ax2.set_xlabel("")
-        ax2.set_ylabel("Demand (MW)")
-        ax2.set_title(f"Average Demand (MW) — {year}")
-        ax2.tick_params(axis='x', rotation=45)
-        plt.tight_layout()
-        st.pyplot(fig2)
+            # ----- Watermark banner on the heatmap -----
+            ax.text(0.5, 0.5, "gemenergyanalytics.substack.com - Julien Jomaux",
+                    color='gray', fontsize=40, alpha=0.3, ha='center', va='center',
+                    rotation=30, transform=ax.transAxes, zorder=1)
 
-# ---------------- 3) Specific-date bar chart (Price or Import/Export) ----------------
-with st.container():
-    metric_label = METRICS[metric_key]["label"]
-    unit_label = METRICS[metric_key]["unit"]
-    st.subheader(f"{metric_label} — {country} — {chosen_day.isoformat()} (daily mean per product)")
-    day_df = specific_day_bar_data(df_year, chosen_day, country, metric_key)
-    if day_df is None or day_df.empty:
-        st.info("No data for the selected date/country/metric.")
-    else:
-        fig3, ax3 = plt.subplots(figsize=(11, 5))
-        sns.set(style="whitegrid")
-        sns.barplot(
-            data=day_df,
-            x="Product",
-            y="Value",
-            color="#4472C4",
-            ax=ax3
-        )
-        ax3.set_xlabel("")
-        ax3.set_ylabel(unit_label)
-        ax3.set_title(f"{metric_label} — {country} — {chosen_day.isoformat()}")
-        ax3.tick_params(axis='x', rotation=45)
-        plt.tight_layout()
-        st.pyplot(fig3)
+            ax.set_xticks([i + 0.5 for i in range(len(heatmap_data.columns))])
+            ax.set_xticklabels(x_labels_bins, rotation=45, ha='right')
+            ax.set_yticks([i + 0.5 for i in range(len(heatmap_data.index))])
+            ax.set_yticklabels(months_label, rotation=0)
+            ax.set_xlabel('')
+            ax.set_ylabel('')
+            plt.tight_layout()
+            st.pyplot(fig)
 
-# Notes
-st.markdown(
+    # ---------------- 2) Demand bar chart (all countries together) ----------------
+    with st.container():
+        st.subheader(f"Demand per country — Yearly average — {year}")
+        demand_df = demand_bar_data(df_year, year)
+        if demand_df is None or demand_df.empty:
+            st.info("No Demand data found for this year.")
+        else:
+            fig2, ax2 = plt.subplots(figsize=(11, 6))
+            sns.set(style="whitegrid")
+            sns.barplot(
+                data=demand_df,
+                x="Country",
+                y="Demand (MW)",
+                palette="Blues_d",
+                ax=ax2
+            )
+            ax2.set_xlabel("")
+            ax2.set_ylabel("Demand (MW)")
+            ax2.set_title(f"Average Demand (MW) — {year}")
+            ax2.tick_params(axis='x', rotation=45)
+            plt.tight_layout()
+            st.pyplot(fig2)
+
+    # ---------------- 3) Specific-date bar chart (Price or Import/Export) ----------------
+    with st.container():
+        metric_label = METRICS[metric_key]["label"]
+        unit_label = METRICS[metric_key]["unit"]
+        st.subheader(f"{metric_label} — {country} — {chosen_day.isoformat()} (daily mean per product)")
+        day_df = specific_day_bar_data(df_year, chosen_day, country, metric_key)
+        if day_df is None or day_df.empty:
+            st.info("No data for the selected date/country/metric.")
+        else:
+            fig3, ax3 = plt.subplots(figsize=(11, 5))
+            sns.set(style="whitegrid")
+            sns.barplot(
+                data=day_df,
+                x="Product",
+                y="Value",
+                color="#4472C4",
+                ax=ax3
+            )
+            ax3.set_xlabel("")
+            ax3.set_ylabel(unit_label)
+            ax3.set_title(f"{metric_label} — {country} — {chosen_day.isoformat()}")
+            ax3.tick_params(axis='x', rotation=45)
+            plt.tight_layout()
+            st.pyplot(fig3)
+
+    # Notes (also gated)
+    st.markdown(
+        """
+    **Notes**
+
+    - Place files next to `app.py` or under `./data/`.
+    - File name must be exactly `RESULT_OVERVIEW_CAPACITY_MARKET_FCR_YYYY.xlsx`.
+    - Country-specific columns follow these patterns (prefix is the country code or full name, e.g., `AT`, `AUSTRIA`, `BE`, …):
+      - **Price**: `CC_SETTLEMENTCAPACITY_PRICE_[EUR/MW]`
+      - **Import(−)/Export(+)** (both supported):
+        - `CC_IMPORT(-)_EXPORT(+)_[MW]`
+        - `CC_DEFICIT(-)_SURPLUS(+)_[MW]`
+      - **Demand** (for the all-countries bar chart): `CC_DEMAND_[MW]`
+    - **CROSSBORDER**/**CROSS-BORDER** is excluded from countries and from the Demand chart.
+    - Heatmap shows **monthly averages** by `PRODUCTNAME`.
+    - Specific-day bar chart shows **daily mean per product** (not monthly averages).  
+      If you prefer sum or a specific intraday slice, let me know.
     """
-**Notes**
-
-- Place files next to `app.py` or under `./data/`.
-- File name must be exactly `RESULT_OVERVIEW_CAPACITY_MARKET_FCR_YYYY.xlsx`.
-- Country-specific columns follow these patterns (prefix is the country code or full name, e.g., `AT`, `AUSTRIA`, `BE`, …):
-  - **Price**: `CC_SETTLEMENTCAPACITY_PRICE_[EUR/MW]`
-  - **Import(−)/Export(+)** (both supported):
-    - `CC_IMPORT(-)_EXPORT(+)_[MW]`
-    - `CC_DEFICIT(-)_SURPLUS(+)_[MW]`
-  - **Demand** (for the all-countries bar chart): `CC_DEMAND_[MW]`
-- **CROSSBORDER**/**CROSS-BORDER** is excluded from countries and from the Demand chart.
-- Heatmap shows **monthly averages** by `PRODUCTNAME`.
-- Specific-day bar chart shows **daily mean per product** (not monthly averages).  
-  If you prefer sum or a specific intraday slice, let me know.
-"""
-)
+    )
