@@ -445,14 +445,10 @@ else:
         else:
             fig, ax = plt.subplots(figsize=(11, 6))
             sns.set(style="white")
-            annots = (
-            heatmap_data
-            .round(0)                      # round to nearest int
-            .applymap(lambda x)  # blank for nan, int for numbers
-            )
+
             sns.heatmap(
                 heatmap_data,
-                annot=annot.values,
+                annot=False,
                 cmap=cmap,
                 center=center,
                 cbar_kws={'label': unit},
@@ -549,6 +545,7 @@ else:
       If you prefer sum or a specific intraday slice, let me know.
     """
     )
+
 
 
 
