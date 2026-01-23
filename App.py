@@ -1,26 +1,27 @@
 
 # app.py
+import os
 import io
-import requests
+import glob
+import time
 import pandas as pd
 import streamlit as st
 import seaborn as sns
 import matplotlib.pyplot as plt
 from calendar import month_abbr
-from datetime import date
 
+# ---------------- Page setup ----------------
 st.set_page_config(page_title="FCR Capacity Price Heatmap", layout="wide")
 
+# Years you want to expose in the UI (adapt if you add more files)
 YEARS = [2021, 2022, 2023, 2024, 2025]
-BASE_YEAR_URL = (
-    "https://www.regelleistung.net/apps/cpp-publisher/api/v2/tenders/files/"
-    "RESULT_OVERVIEW_CAPACITY_MARKET_FCR_{y}-01-01_{y}-12-31.xlsx"
-)
-BASE_MONTH_URL = (
-    "https://www.regelleistung.net/apps/cpp-publisher/api/v2/tenders/files/"
-    "RESULT_OVERVIEW_CAPACITY_MARKET_FCR_{y}-{m:02d}-01_{y}-{m:02d}-31.xlsx"
-)
 
+# Where to look for the Excel files.
+# The app will first try the current folder, then a ./data subfolder.
+FILENAME_PATTERN = "RESULT_OVERVIEW_CAPACITY_MARKET_FCR_{y}.xlsx"
+SEARCH_LOCATIONS = ["", "data"]  # "" = current folder
+
+# Country harmonization (extend as needed)
 COUNTRY_RENAME = {
     'BE': 'BELGIUM', 'BELGIUM': 'BELGIUM',
     'DE': 'GERMANY', 'GERMANY': 'GERMANY',
@@ -30,7 +31,6 @@ COUNTRY_RENAME = {
     'SI': 'SLOVENIA', 'SLOVENIA': 'SLOVENIA',
     'DK': 'DENMARK', 'DENMARK': 'DENMARK',
     'CH': 'SWITZERLAND', 'SWITZERLAND': 'SWITZERLAND',
-    # extend as needed
 }
 
 def harmonize_country(name: str) -> str:
@@ -38,74 +38,44 @@ def harmonize_country(name: str) -> str:
     return COUNTRY_RENAME.get(name, name)
 
 def product_bin_label(product: str) -> str:
+    """Turns '0' -> '0 to 4', '5' -> '5 to 9', else returns as-is."""
     try:
         val = int(str(product).strip())
         return f"{val} to {val+4}"
     except Exception:
         return str(product)
 
-def _get(url: str, timeout=60):
-    """Try GET with verify=True then fallback to verify=False. Return bytes or None."""
-    try:
-        r = requests.get(url, timeout=timeout)
-        if r.status_code == 200 and len(r.content) > 10000:
-            return r.content
-        # fallback (some servers have TLS chain quirks)
-        r = requests.get(url, timeout=timeout, verify=False)
-        if r.status_code == 200 and len(r.content) > 10000:
-            return r.content
-    except Exception:
-        pass
-    return None
+def find_local_file_for_year(year: int) -> str | None:
+    """
+    Look for RESULT_OVERVIEW_CAPACITY_MARKET_FCR_{year}.xlsx
+    first in the app folder, then in ./data.
+    Returns absolute path or None.
+    """
+    candidates = []
+    for loc in SEARCH_LOCATIONS:
+        pattern = os.path.join(loc, FILENAME_PATTERN.format(y=year))
+        candidates.extend(glob.glob(pattern))
+    if not candidates:
+        return None
+    # If multiple matches, take the newest
+    candidates.sort(key=lambda p: os.path.getmtime(p), reverse=True)
+    return os.path.abspath(candidates[0])
 
 @st.cache_data(show_spinner=False)
-def download_year_df(year: int) -> pd.DataFrame | None:
+def load_year_df(path: str, mtime: float) -> pd.DataFrame | None:
     """
-    Try full-year file first. If not available, fall back to concatenating monthly files.
-    Returns a cleaned DataFrame or None.
+    Load the given Excel file and return a cleaned DataFrame.
+    Cache is keyed by (path, mtime) via arguments.
     """
-    # 1) Try full-year
-    year_url = BASE_YEAR_URL.format(y=year)
-    blob = _get(year_url)
-    if blob:
-        try:
-            df = pd.read_excel(io.BytesIO(blob), engine="openpyxl")
-            if not df.empty and 'DATE_FROM' in df.columns:
-                return _clean_dates(df)
-        except Exception:
-            pass
-
-    # 2) Fall back to monthly files
-    # For the current year, only fetch months up to today (to avoid empty future months).
-    last_month = 12
-    today = date.today()
-    if year == today.year:
-        last_month = today.month
-
-    monthly_frames = []
-    for m in range(1, last_month + 1):
-        m_url = BASE_MONTH_URL.format(y=year, m=m)
-        blob = _get(m_url)
-        if not blob:
-            # Some months might use 30 days (e.g., 2025-04-01_2025-04-30). Try day=30 fallback.
-            m_url_30 = m_url.replace("-31.xlsx", "-30.xlsx")
-            blob = _get(m_url_30)
-        if not blob:
-            continue
-        try:
-            dfm = pd.read_excel(io.BytesIO(blob), engine="openpyxl")
-            if dfm is not None and not dfm.empty and 'DATE_FROM' in dfm.columns:
-                monthly_frames.append(dfm)
-        except Exception:
-            continue
-
-    if not monthly_frames:
+    try:
+        # openpyxl is the default engine for .xlsx in pandas >= 2, but being explicit is fine
+        df = pd.read_excel(path, engine="openpyxl")
+    except Exception:
         return None
 
-    df_all = pd.concat(monthly_frames, ignore_index=True)
-    return _clean_dates(df_all)
+    if df is None or df.empty or 'DATE_FROM' not in df.columns:
+        return None
 
-def _clean_dates(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     df['DATE'] = pd.to_datetime(df['DATE_FROM'], dayfirst=True, errors='coerce')
     df['YEAR'] = df['DATE'].dt.year
@@ -114,10 +84,12 @@ def _clean_dates(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 def extract_countries_from_df(df: pd.DataFrame) -> list[str]:
+    """Detect available countries based on *_SETTLEMENTCAPACITY_PRICE_[EUR/MW] columns."""
     candidates = set()
     for col in df.columns:
-        if str(col).endswith('SETTLEMENTCAPACITY_PRICE_[EUR/MW]'):
-            code = str(col).split('_')[0]
+        col = str(col)
+        if col.endswith('SETTLEMENTCAPACITY_PRICE_[EUR/MW]'):
+            code = col.split('_')[0]
             candidates.add(harmonize_country(code))
     return sorted(candidates)
 
@@ -132,6 +104,12 @@ def find_price_column_for_country(df: pd.DataFrame, country: str) -> str | None:
     return keys[0] if keys else None
 
 def build_heatmap_for(df: pd.DataFrame, year: int, country: str):
+    """
+    Returns (heatmap_data, x_labels_bins, months_label)
+    - heatmap_data: index: months (Jan..Dec), columns: PRODUCTNAME (sorted)
+    - x_labels_bins: pretty x labels (e.g., '0 to 4')
+    - months_label: ['Jan', ..., 'Dec']
+    """
     year_df = df[df['YEAR'] == year].copy()
     if year_df.empty:
         return None, None, None
@@ -150,52 +128,61 @@ def build_heatmap_for(df: pd.DataFrame, year: int, country: str):
     if not products:
         return None, None, None
 
-    g = (year_df
-         .dropna(subset=[price_col])
-         .groupby(['MONTH_NAME', 'PRODUCTNAME'])[price_col]
-         .mean()
-         .reset_index())
+    grouped = (year_df
+               .dropna(subset=[price_col])
+               .groupby(['MONTH_NAME', 'PRODUCTNAME'])[price_col]
+               .mean()
+               .reset_index())
 
-    months_label = [month_abbr[m] for m in range(1, 12 + 1)]
+    months_label = [month_abbr[m] for m in range(1, 13)]
     all_months = pd.DataFrame({'MONTH_NAME': months_label})
-    all_products = pd.DataFrame({'PRODUCTNAME': products})
-    all_months['__k'], all_products['__k'] = 1, 1
-    full_index = pd.merge(all_months, all_products, on='__k').drop(columns='__k')
+    all_prods = pd.DataFrame({'PRODUCTNAME': products})
+    all_months['k'] = 1
+    all_prods['k'] = 1
+    full_index = pd.merge(all_months, all_prods, on='k').drop(columns='k')
 
-    merged = pd.merge(full_index, g, on=['MONTH_NAME', 'PRODUCTNAME'], how='left')
-    heatmap_data = merged.pivot(index='MONTH_NAME', columns='PRODUCTNAME', values=price_col)
-    heatmap_data = heatmap_data.reindex(index=months_label, columns=products)
+    merged = pd.merge(full_index, grouped, on=['MONTH_NAME', 'PRODUCTNAME'], how='left')
+    heatmap = merged.pivot(index='MONTH_NAME', columns='PRODUCTNAME', values=price_col)
+    heatmap = heatmap.reindex(index=months_label, columns=products)
 
     x_labels_bins = [product_bin_label(p) for p in products]
-    return heatmap_data, x_labels_bins, months_label
+    return heatmap, x_labels_bins, months_label
 
 # ---------------- UI ----------------
 st.title("FCR Capacity Price Heatmap (€/MW per block)")
-st.caption("Source: regelleistung.net – Capacity Market FCR result files")
+st.caption("Reads local Excel files named: RESULT_OVERVIEW_CAPACITY_MARKET_FCR_YYYY.xlsx")
 
 left, right = st.columns([1, 3])
 
 with left:
     year = st.selectbox("Select year", YEARS, index=len(YEARS)-1)
-    with st.spinner(f"Fetching data for {year}…"):
-        df_year = download_year_df(year)
+
+    path = find_local_file_for_year(year)
+    if not path or not os.path.exists(path):
+        st.error(
+            f"File not found for {year}. Expected name: "
+            f"`{FILENAME_PATTERN.format(y=year)}` in the app folder or `./data/`."
+        )
+        st.stop()
+
+    mtime = os.path.getmtime(path)
+    with st.spinner(f"Loading {os.path.basename(path)} …"):
+        df_year = load_year_df(path, mtime)
 
     if df_year is None:
-        st.error(
-            "No data available for this year. For 2025 the publisher provides monthly files; "
-            "if none were found or accessible, try another year or check connectivity."
-        )
+        st.error("Could not load or parse the Excel file (missing 'DATE_FROM' or empty).")
         st.stop()
 
     countries = extract_countries_from_df(df_year)
     if not countries:
-        st.error("No countries detected in this dataset. The file structure may have changed.")
+        st.error("No countries detected in the file. Check the column names.")
         st.stop()
 
     country = st.selectbox("Select country", countries)
 
 with right:
     heatmap_data, x_labels_bins, months_label = build_heatmap_for(df_year, year, country)
+
     if heatmap_data is None or heatmap_data.empty:
         st.warning("No price data found for this selection.")
     else:
@@ -220,7 +207,8 @@ with right:
 st.markdown(
     """
 **Notes**
-- If a full-year file is missing, the app automatically fetches and concatenates monthly files (e.g., `…_YYYY-MM-01_YYYY-MM-31.xlsx`).
-- Product labels are shown as 5‑minute blocks (e.g., "0 to 4") when numeric; non‑numeric labels are preserved.
+- Place files next to `app.py` or under `./data/`.
+- File name must be exactly `RESULT_OVERVIEW_CAPACITY_MARKET_FCR_YYYY.xlsx`.
+- The heatmap shows monthly **average settlement capacity prices** (€/MW) per `PRODUCTNAME`.
 """
 )
