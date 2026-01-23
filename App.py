@@ -445,7 +445,11 @@ else:
         else:
             fig, ax = plt.subplots(figsize=(11, 6))
             sns.set(style="white")
-            annot = heatmap_data.round(0).astype(int)  # round and force to int
+            annots = (
+            heatmap_data
+            .round(0)                      # round to nearest int
+            .applymap(lambda x: '' if np.isnan(x) else int(x))  # blank for nan, int for numbers
+            )
             sns.heatmap(
                 heatmap_data,
                 annot=annot.values,
@@ -545,6 +549,7 @@ else:
       If you prefer sum or a specific intraday slice, let me know.
     """
     )
+
 
 
 
