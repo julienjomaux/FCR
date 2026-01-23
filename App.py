@@ -480,7 +480,7 @@ else:
 
     # ---------------- 2) Demand bar chart (all countries together) ----------------
     with st.container():
-        st.subheader(f"Demand per country — Yearly average — {year}")
+        st.subheader(f"Demand per country  — {year}")
         demand_df = demand_bar_data(df_year, year)
         if demand_df is None or demand_df.empty:
             st.info("No Demand data found for this year.")
@@ -505,7 +505,12 @@ else:
     with st.container():
         metric_label = METRICS[metric_key]["label"]
         unit_label = METRICS[metric_key]["unit"]
-        st.subheader(f"{metric_label} — {country} — {chosen_day.isoformat()} (daily mean per product)")
+        st.subheader(f"{metric_label} — {country} — {chosen_day.isoformat()}")
+        st.markdown(
+            """
+       This presents the results of the auction per day. 
+        """
+        )
         day_df = specific_day_bar_data(df_year, chosen_day, country, metric_key)
         if day_df is None or day_df.empty:
             st.info("No data for the selected date/country/metric.")
@@ -526,25 +531,7 @@ else:
             plt.tight_layout()
             st.pyplot(fig3)
 
-    # Notes (also gated)
-    st.markdown(
-        """
-    **Notes**
-
-    - Place files next to `app.py` or under `./data/`.
-    - File name must be exactly `RESULT_OVERVIEW_CAPACITY_MARKET_FCR_YYYY.xlsx`.
-    - Country-specific columns follow these patterns (prefix is the country code or full name, e.g., `AT`, `AUSTRIA`, `BE`, …):
-      - **Price**: `CC_SETTLEMENTCAPACITY_PRICE_[EUR/MW]`
-      - **Import(−)/Export(+)** (both supported):
-        - `CC_IMPORT(-)_EXPORT(+)_[MW]`
-        - `CC_DEFICIT(-)_SURPLUS(+)_[MW]`
-      - **Demand** (for the all-countries bar chart): `CC_DEMAND_[MW]`
-    - **CROSSBORDER**/**CROSS-BORDER** is excluded from countries and from the Demand chart.
-    - Heatmap shows **monthly averages** by `PRODUCTNAME`.
-    - Specific-day bar chart shows **daily mean per product** (not monthly averages).  
-      If you prefer sum or a specific intraday slice, let me know.
-    """
-    )
+    
 
 
 
