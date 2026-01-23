@@ -448,7 +448,7 @@ else:
             annots = (
             heatmap_data
             .round(0)                      # round to nearest int
-            .applymap(lambda x: '' if np.isnan(x) else int(x))  # blank for nan, int for numbers
+            .applymap(lambda x)  # blank for nan, int for numbers
             )
             sns.heatmap(
                 heatmap_data,
@@ -549,6 +549,7 @@ else:
       If you prefer sum or a specific intraday slice, let me know.
     """
     )
+
 
 
 
