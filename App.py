@@ -1,7 +1,6 @@
 
 import os
 import glob
-import time
 from typing import Optional, List, Tuple, Dict
 
 import pandas as pd
@@ -83,10 +82,11 @@ def load_year_df(path: str, mtime: float) -> Optional[pd.DataFrame]:
     return df
 
 # ---------------- Metric specifications ----------------
-METRICS: Dict[str, Dict[str, Optional[str]]] = {
+# Note: suffixes can be a list to support legacy/alternative names.
+METRICS: Dict[str, Dict] = {
     "PRICE": {
         "label": "Settlement Capacity Price",
-        "suffix": "SETTLEMENTCAPACITY_PRICE_[EUR/MW]",
+        "suffixes": ["SETTLEMENTCAPACITY_PRICE_[EUR/MW]"],
         "cbar_label": "€/MW",
         "cmap": "YlOrRd",
         "center": None,
@@ -94,7 +94,7 @@ METRICS: Dict[str, Dict[str, Optional[str]]] = {
     },
     "DEMAND": {
         "label": "Demand",
-        "suffix": "DEMAND_[MW]",
+        "suffixes": ["DEMAND_[MW]"],
         "cbar_label": "MW",
         "cmap": "YlGnBu",
         "center": None,
@@ -102,7 +102,13 @@ METRICS: Dict[str, Dict[str, Optional[str]]] = {
     },
     "IMPORT_EXPORT": {
         "label": "Import (−) / Export (+)",
-        "suffix": "IMPORT(-)_EXPORT(+)_[MW]",
+        # Support both naming schemes:
+        #   CC_IMPORT(-)_EXPORT(+)_[MW]
+        #   CC_DEFICIT(-)_SURPLUS(+)_[MW]
+        "suffixes": [
+            "IMPORT(-)_EXPORT(+)_[MW]",
+            "DEFICIT(-)_SURPLUS(+)_[MW]",
+        ],
         "cbar_label": "MW",
         "cmap": "coolwarm",
         "center": 0.0,  # Diverging map centered at 0 to show import(-) vs export(+)
@@ -113,14 +119,18 @@ METRICS: Dict[str, Dict[str, Optional[str]]] = {
 def extract_countries_from_df(df: pd.DataFrame) -> List[str]:
     """
     Detect available countries based on any of the metric suffixes.
-    We consider columns like 'AT_DEMAND_[MW]' or 'BE_*SETTLEMENTCAPACITY_PRICE_[EUR/MW]'.
+    We consider columns like 'AT_DEMAND_[MW]' or 'AUSTRIA_DEFICIT(-)_SURPLUS(+)_[MW]'.
     """
-    suffixes = [spec["suffix"] for spec in METRICS.values()]
+    all_suffixes: List[str] = []
+    for spec in METRICS.values():
+        all_suffixes.extend(spec["suffixes"])
+
     candidates = set()
     for col in df.columns:
         col_str = str(col)
-        for suf in suffixes:
+        for suf in all_suffixes:
             if col_str.endswith(suf):
+                # prefix is the part before first underscore
                 prefix = col_str.split('_')[0]
                 candidates.add(harmonize_country(prefix))
                 break
@@ -129,16 +139,27 @@ def extract_countries_from_df(df: pd.DataFrame) -> List[str]:
 def find_metric_column_for_country(df: pd.DataFrame, country: str, metric_key: str) -> Optional[str]:
     """
     From df, find the column name matching the selected country and metric.
+    Accept any of the possible suffix variants for that metric.
     Country is tested via the prefix before the first underscore.
     """
-    suffix = METRICS[metric_key]["suffix"]
+    suffixes = METRICS[metric_key]["suffixes"]
     matches = []
     for col in df.columns:
         col_str = str(col)
-        if col_str.endswith(suffix):
-            prefix = col_str.split('_')[0]
-            if harmonize_country(prefix) == country:
-                matches.append(col_str)
+        for suf in suffixes:
+            if col_str.endswith(suf):
+                prefix = col_str.split('_')[0]
+                if harmonize_country(prefix) == country:
+                    matches.append(col_str)
+                    break
+    # Prefer a deterministic order (e.g., IMPORT/EXPORT over DEFICIT/SURPLUS if both exist)
+    if matches:
+        # Small preference: if both variants exist, prefer IMPORT/EXPORT naming
+        def pref_score(cname: str) -> int:
+            if cname.endswith("IMPORT(-)_EXPORT(+)_[MW]"):
+                return 0
+            return 1
+        matches.sort(key=pref_score)
     return matches[0] if matches else None
 
 def ensure_product_column(df: pd.DataFrame) -> pd.DataFrame:
@@ -242,18 +263,14 @@ with st.sidebar:
         st.stop()
 
     # Try to default to BELGIUM if present; else first in the list
-    if "BELGIUM" in countries:
-        default_country_idx = countries.index("BELGIUM")
-    else:
-        default_country_idx = 0
-
+    default_country_idx = countries.index("BELGIUM") if "BELGIUM" in countries else 0
     country = st.selectbox("Country", countries, index=default_country_idx)
 
     # Metric selection
     metric_options = {
         "PRICE": "Settlement Capacity Price (€/MW)",
         "DEMAND": "Demand (MW)",
-        "IMPORT_EXPORT": "Import (−) / Export (+) (MW)"
+        "IMPORT_EXPORT": "Import (−) / Export (+) (MW)",
     }
     metric_key = st.selectbox(
         "Metric",
@@ -273,7 +290,6 @@ else:
     fig, ax = plt.subplots(figsize=(11, 6))
     sns.set(style="white")
 
-    # Choose diverging for import/export with center=0
     sns.heatmap(
         heatmap_data,
         annot=False,
@@ -283,8 +299,7 @@ else:
         ax=ax
     )
 
-    spec = METRICS[metric_key]
-    ax.set_title(f"{spec['title_suffix']} — {country} — {year}")
+    ax.set_title(f"{title_suffix} — {country} — {year}")
     ax.set_xticks([i + 0.5 for i in range(len(heatmap_data.columns))])
     ax.set_xticklabels(x_labels_bins, rotation=45, ha='right')
     ax.set_yticks([i + 0.5 for i in range(len(heatmap_data.index))])
@@ -301,14 +316,16 @@ st.markdown(
 
 - Place files next to `app.py` or under `./data/`.
 - File name must be exactly `RESULT_OVERVIEW_CAPACITY_MARKET_FCR_YYYY.xlsx`.
-- Country-specific columns follow these patterns (prefix is the country code, e.g., `AT`, `BE`, …):
+- Country-specific columns follow these patterns (prefix is the country code or full name, e.g., `AT`, `AUSTRIA`, `BE`, …):
   - **Price**: `CC_SETTLEMENTCAPACITY_PRICE_[EUR/MW]`
   - **Demand**: `CC_DEMAND_[MW]`
-  - **Import(−)/Export(+)**: `CC_IMPORT(-)_EXPORT(+)_[MW]`
+  - **Import(−)/Export(+)** (both supported):
+    - `CC_IMPORT(-)_EXPORT(+)_[MW]`
+    - `CC_DEFICIT(-)_SURPLUS(+)_[MW]`
 - The heatmap shows monthly **average values** per `PRODUCTNAME`.  
   If `PRODUCTNAME` is missing in your file, the app will aggregate into a single bucket **ALL**.
 - Import(−)/Export(+) uses a diverging colormap centered at 0:
-  - **Blue** = Import (negative)
-  - **Red** = Export (positive)
+  - **Blue** = Import / Deficit (negative)
+  - **Red** = Export / Surplus (positive)
 """
 )
