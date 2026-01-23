@@ -319,6 +319,22 @@ stripe_link = get_config_value('STRIPE_CHECKOUT_LINK', '#')
 secret_password = get_config_value('SECRET_PASSWORD', '')
 
 # --- Signup callout with hyperlink to secret STRIPE_CHECKOUT_LINK ---
+
+st.markdown(
+    """
+This app presents heatmaps and daily views of FCR from 201 to 2025. 
+
+- **Heatmaps:** Show monthly average, maximal average, and maximal marginal capacity prices per month and 4-hour product.
+- **Daily view:** Displays capacity prices for all 12 products for a selected day.
+
+**Data source:** [Regelleistung.net](https://www.regelleistung.net/)
+
+**More insights:** [GEM Energy Analytics](https://gemenergyanalytics.substack.com/)  
+**Connect with me:** [Julien Jomaux](https://www.linkedin.com/in/julien-jomaux/)  
+**Email me:** [julien.jomaux@gmail.com](mailto:julien.jomaux@gmail.com)
+"""
+)
+
 st.markdown(
     f"""
     If you want to access all the apps of GEM Energy Analytics, please sign up following the link below. 
@@ -523,4 +539,5 @@ else:
       If you prefer sum or a specific intraday slice, let me know.
     """
     )
+
 
