@@ -175,3 +175,52 @@ st.caption("Source: regelleistung.net – Capacity Market FCR result files")
 
 left, right = st.columns([1, 3])
 
+with left:
+    year = st.selectbox("Select year", YEARS, index=len(YEARS)-1)
+    with st.spinner(f"Fetching data for {year}…"):
+        df_year = download_year_df(year)
+
+    if df_year is None:
+        st.error(
+            "No data available for this year. For 2025 the publisher provides monthly files; "
+            "if none were found or accessible, try another year or check connectivity."
+        )
+        st.stop()
+
+    countries = extract_countries_from_df(df_year)
+    if not countries:
+        st.error("No countries detected in this dataset. The file structure may have changed.")
+        st.stop()
+
+    country = st.selectbox("Select country", countries)
+
+with right:
+    heatmap_data, x_labels_bins, months_label = build_heatmap_for(df_year, year, country)
+    if heatmap_data is None or heatmap_data.empty:
+        st.warning("No price data found for this selection.")
+    else:
+        fig, ax = plt.subplots(figsize=(10, 6))
+        sns.heatmap(
+            heatmap_data,
+            annot=False,
+            cmap="YlOrRd",
+            cbar_kws={'label': '€/MW'},
+            ax=ax
+        )
+        ax.set_title(f"Average Capacity Price FCR — {country} — {year}")
+        ax.set_xticks([i + 0.5 for i in range(len(heatmap_data.columns))])
+        ax.set_xticklabels(x_labels_bins, rotation=45, ha='right')
+        ax.set_yticks([i + 0.5 for i in range(len(heatmap_data.index))])
+        ax.set_yticklabels(months_label, rotation=0)
+        ax.set_xlabel('')
+        ax.set_ylabel('')
+        plt.tight_layout()
+        st.pyplot(fig)
+
+st.markdown(
+    """
+**Notes**
+- If a full-year file is missing, the app automatically fetches and concatenates monthly files (e.g., `…_YYYY-MM-01_YYYY-MM-31.xlsx`).
+- Product labels are shown as 5‑minute blocks (e.g., "0 to 4") when numeric; non‑numeric labels are preserved.
+"""
+)
