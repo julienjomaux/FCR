@@ -62,25 +62,26 @@ def find_local_file_for_year(year: int) -> str | None:
     return os.path.abspath(candidates[0])
 
 @st.cache_data(show_spinner=False)
+@st.cache_data(show_spinner=False)
 def load_year_df(path: str, mtime: float) -> pd.DataFrame | None:
-    """
-    Load the given Excel file and return a cleaned DataFrame.
-    Cache is keyed by (path, mtime) via arguments.
-    """
     try:
-        # openpyxl is the default engine for .xlsx in pandas >= 2, but being explicit is fine
-        df = pd.read_excel(path, engine="openpyxl")
-    except Exception:
+        df = pd.read_excel(path, sheet_name='001', engine="openpyxl")
+        df.columns = [col.strip().upper() for col in df.columns]
+        # Replace commas with dots for all string columns (potential decimals)
+        for col in df.columns:
+            if df[col].dtype == 'object':
+                try:
+                    df[col] = df[col].str.replace(',', '.').astype(float)
+                except Exception:
+                    pass  # column is non-numeric, skip
+    except Exception as e:
+        print("Error loading Excel file:", e)
         return None
 
     if df is None or df.empty or 'DATE_FROM' not in df.columns:
         return None
 
-    df = df.copy()
-    df['DATE'] = pd.to_datetime(df['DATE_FROM'], dayfirst=True, errors='coerce')
-    df['YEAR'] = df['DATE'].dt.year
-    df['MONTH'] = df['DATE'].dt.month
-    df['MONTH_NAME'] = df['DATE'].dt.strftime('%b')
+    # Continue with your workflow...
     return df
 
 def extract_countries_from_df(df: pd.DataFrame) -> list[str]:
@@ -212,3 +213,4 @@ st.markdown(
 - The heatmap shows monthly **average settlement capacity prices** (€/MW) per `PRODUCTNAME`.
 """
 )
+
