@@ -1,7 +1,8 @@
 
 import os
 import glob
-from typing import Optional, List, Tuple, Dict
+from typing import Optional, List, Dict
+from datetime import date
 
 import pandas as pd
 import streamlit as st
@@ -10,7 +11,7 @@ import matplotlib.pyplot as plt
 from calendar import month_abbr
 
 # ---------------- Page setup ----------------
-st.set_page_config(page_title="FCR Heatmap — Price, Demand, Import/Export", layout="wide")
+st.set_page_config(page_title="FCR — Price Heatmap, Demand & Day View", layout="wide")
 
 # Years you want to expose in the UI (adapt if you add more files)
 YEARS = [2021, 2022, 2023, 2024, 2025]
@@ -30,7 +31,10 @@ COUNTRY_RENAME = {
     'SI': 'SLOVENIA', 'SLOVENIA': 'SLOVENIA',
     'DK': 'DENMARK', 'DENMARK': 'DENMARK',
     'CH': 'SWITZERLAND', 'SWITZERLAND': 'SWITZERLAND',
+    # Any non-country labels that may appear will be filtered later (e.g., CROSSBORDER)
 }
+
+NON_COUNTRIES = {"CROSSBORDER", "CROSS-BORDER"}  # filtered out from lists/charts
 
 def harmonize_country(name: str) -> str:
     name = str(name).upper().strip()
@@ -87,18 +91,16 @@ METRICS: Dict[str, Dict] = {
     "PRICE": {
         "label": "Settlement Capacity Price",
         "suffixes": ["SETTLEMENTCAPACITY_PRICE_[EUR/MW]"],
-        "cbar_label": "€/MW",
+        "unit": "€/MW",
         "cmap": "YlOrRd",
         "center": None,
         "title_suffix": "Average Capacity Price FCR",
     },
+    # Demand is visualized separately (bar chart across countries)
     "DEMAND": {
         "label": "Demand",
         "suffixes": ["DEMAND_[MW]"],
-        "cbar_label": "MW",
-        "cmap": "YlGnBu",
-        "center": None,
-        "title_suffix": "Average Demand FCR",
+        "unit": "MW",
     },
     "IMPORT_EXPORT": {
         "label": "Import (−) / Export (+)",
@@ -109,7 +111,7 @@ METRICS: Dict[str, Dict] = {
             "IMPORT(-)_EXPORT(+)_[MW]",
             "DEFICIT(-)_SURPLUS(+)_[MW]",
         ],
-        "cbar_label": "MW",
+        "unit": "MW",
         "cmap": "coolwarm",
         "center": 0.0,  # Diverging map centered at 0 to show import(-) vs export(+)
         "title_suffix": "Average Import(−)/Export(+) FCR",
@@ -119,7 +121,7 @@ METRICS: Dict[str, Dict] = {
 def extract_countries_from_df(df: pd.DataFrame) -> List[str]:
     """
     Detect available countries based on any of the metric suffixes.
-    We consider columns like 'AT_DEMAND_[MW]' or 'AUSTRIA_DEFICIT(-)_SURPLUS(+)_[MW]'.
+    Filter out non-country labels like CROSSBORDER.
     """
     all_suffixes: List[str] = []
     for spec in METRICS.values():
@@ -132,7 +134,9 @@ def extract_countries_from_df(df: pd.DataFrame) -> List[str]:
             if col_str.endswith(suf):
                 # prefix is the part before first underscore
                 prefix = col_str.split('_')[0]
-                candidates.add(harmonize_country(prefix))
+                label = harmonize_country(prefix)
+                if label not in NON_COUNTRIES:
+                    candidates.add(label)
                 break
     return sorted(candidates)
 
@@ -152,13 +156,10 @@ def find_metric_column_for_country(df: pd.DataFrame, country: str, metric_key: s
                 if harmonize_country(prefix) == country:
                     matches.append(col_str)
                     break
-    # Prefer a deterministic order (e.g., IMPORT/EXPORT over DEFICIT/SURPLUS if both exist)
-    if matches:
-        # Small preference: if both variants exist, prefer IMPORT/EXPORT naming
+    # Prefer deterministic order (prefer IMPORT/EXPORT over DEFICIT/SURPLUS if both exist)
+    if matches and metric_key == "IMPORT_EXPORT":
         def pref_score(cname: str) -> int:
-            if cname.endswith("IMPORT(-)_EXPORT(+)_[MW]"):
-                return 0
-            return 1
+            return 0 if cname.endswith("IMPORT(-)_EXPORT(+)_[MW]") else 1
         matches.sort(key=pref_score)
     return matches[0] if matches else None
 
@@ -173,10 +174,8 @@ def ensure_product_column(df: pd.DataFrame) -> pd.DataFrame:
 
 def build_heatmap_for(df: pd.DataFrame, year: int, country: str, metric_key: str):
     """
-    Returns (heatmap_data, x_labels_bins, months_label, cbar_label, cmap, center, title_suffix)
+    Returns (heatmap_data, x_labels_bins, months_label, unit, cmap, center, title_suffix)
     - heatmap_data: index: months (Jan..Dec), columns: PRODUCTNAME (sorted)
-    - x_labels_bins: pretty x labels (e.g., '0 to 4' for 0/5/... if product names are numeric)
-    - months_label: ['Jan', ..., 'Dec']
     """
     year_df = df[df['YEAR'] == year].copy()
     if year_df.empty:
@@ -208,7 +207,7 @@ def build_heatmap_for(df: pd.DataFrame, year: int, country: str, metric_key: str
 
     months_label = [month_abbr[m] for m in range(1, 13)]
 
-    # Build full grid of months x products to keep order
+    # Full grid of months x products to keep order
     all_months = pd.DataFrame({'MONTH_NAME': months_label})
     all_prods = pd.DataFrame({'PRODUCTNAME': products})
     all_months['k'] = 1
@@ -222,15 +221,94 @@ def build_heatmap_for(df: pd.DataFrame, year: int, country: str, metric_key: str
     x_labels_bins = [product_bin_label(p) for p in products]
 
     spec = METRICS[metric_key]
-    cbar_label = spec["cbar_label"]
-    cmap = spec["cmap"]
-    center = spec["center"]
+    unit = spec["unit"]
+    cmap = spec.get("cmap")
+    center = spec.get("center")
     title_suffix = spec["title_suffix"]
 
-    return heatmap, x_labels_bins, months_label, cbar_label, cmap, center, title_suffix
+    return heatmap, x_labels_bins, months_label, unit, cmap, center, title_suffix
+
+def collect_demand_columns(df: pd.DataFrame) -> Dict[str, str]:
+    """
+    Return a mapping of country_name -> DEMAND column for that country.
+    Filters out non-country labels (e.g., CROSSBORDER).
+    """
+    suffixes = METRICS["DEMAND"]["suffixes"]
+    mapping: Dict[str, str] = {}
+    for col in df.columns:
+        col_str = str(col)
+        for suf in suffixes:
+            if col_str.endswith(suf):
+                prefix = col_str.split('_')[0]
+                cname = harmonize_country(prefix)
+                if cname not in NON_COUNTRIES:
+                    mapping[cname] = col_str
+                break
+    return mapping
+
+def demand_bar_data(df: pd.DataFrame, year: int) -> Optional[pd.DataFrame]:
+    """
+    Build a dataframe with average demand per country for the selected year.
+    Returns columns: ['Country', 'Demand (MW)']
+    """
+    year_df = df[df['YEAR'] == year].copy()
+    if year_df.empty:
+        return None
+
+    mapping = collect_demand_columns(year_df)
+    if not mapping:
+        return None
+
+    out_rows = []
+    for cname, col in mapping.items():
+        vals = pd.to_numeric(year_df[col], errors='coerce')
+        if vals.notna().any():
+            out_rows.append({"Country": cname, "Demand (MW)": vals.mean()})
+    if not out_rows:
+        return None
+    out = pd.DataFrame(out_rows).sort_values("Demand (MW)", ascending=False)
+    return out
+
+def specific_day_bar_data(df: pd.DataFrame, the_date: date, country: str, metric_key: str) -> Optional[pd.DataFrame]:
+    """
+    Build a dataframe with daily mean per product for given date/country/metric.
+    Returns columns: ['Product', 'Value']
+    """
+    day_df = df.copy()
+    day_df = day_df[day_df['DATE'].dt.date == the_date]
+    if day_df.empty:
+        return None
+
+    metric_col = find_metric_column_for_country(day_df, country, metric_key)
+    if not metric_col:
+        return None
+
+    day_df = ensure_product_column(day_df)
+    day_df[metric_col] = pd.to_numeric(day_df[metric_col], errors='coerce')
+    day_df['PRODUCTNAME'] = day_df['PRODUCTNAME'].astype(str)
+
+    grouped = (
+        day_df
+        .dropna(subset=[metric_col])
+        .groupby('PRODUCTNAME')[metric_col]
+        .mean()  # daily mean per product (not monthly)
+        .reset_index()
+    )
+    if grouped.empty:
+        return None
+
+    # Order products as before (numeric bins first)
+    grouped['__order_key__'] = grouped['PRODUCTNAME'].apply(
+        lambda x: (0, int(x)) if str(x).isdigit() else (1, str(x))
+    )
+    grouped = grouped.sort_values('__order_key__').drop(columns='__order_key__')
+
+    grouped['Product'] = grouped['PRODUCTNAME'].apply(product_bin_label)
+    grouped = grouped.rename(columns={metric_col: 'Value'})[['Product', 'Value']]
+    return grouped
 
 # ---------------- UI ----------------
-st.title("FCR Heatmap — Price, Demand, Import/Export")
+st.title("FCR — Price Heatmap, Demand (All Countries), and Specific-Day View")
 st.caption("Reads local Excel files named: RESULT_OVERVIEW_CAPACITY_MARKET_FCR_YYYY.xlsx")
 
 # Sidebar controls
@@ -256,7 +334,7 @@ with st.sidebar:
         st.error("Could not load or parse the Excel file (missing 'DATE_FROM' or empty).")
         st.stop()
 
-    # Countries (from any metric)
+    # Countries (from any metric), excluding non-countries
     countries = extract_countries_from_df(df_year)
     if not countries:
         st.error("No countries detected in the file. Check the column names.")
@@ -266,10 +344,9 @@ with st.sidebar:
     default_country_idx = countries.index("BELGIUM") if "BELGIUM" in countries else 0
     country = st.selectbox("Country", countries, index=default_country_idx)
 
-    # Metric selection
+    # Metric selection — ONLY Price or Import/Export (Demand shown separately as bar chart)
     metric_options = {
         "PRICE": "Settlement Capacity Price (€/MW)",
-        "DEMAND": "Demand (MW)",
         "IMPORT_EXPORT": "Import (−) / Export (+) (MW)",
     }
     metric_key = st.selectbox(
@@ -279,35 +356,96 @@ with st.sidebar:
         index=0
     )
 
-# Main visualization
-heatmap_data, x_labels_bins, months_label, cbar_label, cmap, center, title_suffix = build_heatmap_for(
-    df_year, year, country, metric_key
-)
-
-if heatmap_data is None or heatmap_data.empty:
-    st.warning("No data found for this selection (metric & country).")
-else:
-    fig, ax = plt.subplots(figsize=(11, 6))
-    sns.set(style="white")
-
-    sns.heatmap(
-        heatmap_data,
-        annot=False,
-        cmap=cmap,
-        center=center,
-        cbar_kws={'label': cbar_label},
-        ax=ax
+    # Specific date for the third chart
+    # Limit the date picker to the available dates in this year's file
+    min_d = pd.to_datetime(df_year['DATE'].min()).date() if not df_year.empty else date(year, 1, 1)
+    max_d = pd.to_datetime(df_year['DATE'].max()).date() if not df_year.empty else date(year, 12, 31)
+    default_day = min(max_d, max(min_d, date(year, 1, 1)))
+    chosen_day = st.date_input(
+        "Specific date (for day bar chart)",
+        value=default_day,
+        min_value=min_d,
+        max_value=max_d
     )
 
-    ax.set_title(f"{title_suffix} — {country} — {year}")
-    ax.set_xticks([i + 0.5 for i in range(len(heatmap_data.columns))])
-    ax.set_xticklabels(x_labels_bins, rotation=45, ha='right')
-    ax.set_yticks([i + 0.5 for i in range(len(heatmap_data.index))])
-    ax.set_yticklabels(months_label, rotation=0)
-    ax.set_xlabel('')
-    ax.set_ylabel('')
-    plt.tight_layout()
-    st.pyplot(fig)
+# ---------------- 1) Main heatmap (Price or Import/Export) ----------------
+with st.container():
+    heatmap_data, x_labels_bins, months_label, unit, cmap, center, title_suffix = build_heatmap_for(
+        df_year, year, country, metric_key
+    )
+
+    st.subheader(f"{title_suffix} — {country} — {year}")
+    if heatmap_data is None or heatmap_data.empty:
+        st.warning("No data found for this selection (metric & country).")
+    else:
+        fig, ax = plt.subplots(figsize=(11, 6))
+        sns.set(style="white")
+
+        sns.heatmap(
+            heatmap_data,
+            annot=False,
+            cmap=cmap,
+            center=center,
+            cbar_kws={'label': unit},
+            ax=ax
+        )
+
+        ax.set_xticks([i + 0.5 for i in range(len(heatmap_data.columns))])
+        ax.set_xticklabels(x_labels_bins, rotation=45, ha='right')
+        ax.set_yticks([i + 0.5 for i in range(len(heatmap_data.index))])
+        ax.set_yticklabels(months_label, rotation=0)
+        ax.set_xlabel('')
+        ax.set_ylabel('')
+        plt.tight_layout()
+        st.pyplot(fig)
+
+# ---------------- 2) Demand bar chart (all countries together) ----------------
+with st.container():
+    st.subheader(f"Demand per country — Yearly average — {year}")
+    demand_df = demand_bar_data(df_year, year)
+    if demand_df is None or demand_df.empty:
+        st.info("No Demand data found for this year.")
+    else:
+        fig2, ax2 = plt.subplots(figsize=(11, 6))
+        sns.set(style="whitegrid")
+        sns.barplot(
+            data=demand_df,
+            x="Country",
+            y="Demand (MW)",
+            palette="Blues_d",
+            ax=ax2
+        )
+        ax2.set_xlabel("")
+        ax2.set_ylabel("Demand (MW)")
+        ax2.set_title(f"Average Demand (MW) — {year}")
+        ax2.tick_params(axis='x', rotation=45)
+        plt.tight_layout()
+        st.pyplot(fig2)
+
+# ---------------- 3) Specific-date bar chart (Price or Import/Export) ----------------
+with st.container():
+    metric_label = METRICS[metric_key]["label"]
+    unit_label = METRICS[metric_key]["unit"]
+    st.subheader(f"{metric_label} — {country} — {chosen_day.isoformat()} (daily mean per product)")
+    day_df = specific_day_bar_data(df_year, chosen_day, country, metric_key)
+    if day_df is None or day_df.empty:
+        st.info("No data for the selected date/country/metric.")
+    else:
+        fig3, ax3 = plt.subplots(figsize=(11, 5))
+        sns.set(style="whitegrid")
+        sns.barplot(
+            data=day_df,
+            x="Product",
+            y="Value",
+            color="#4472C4",
+            ax=ax3
+        )
+        ax3.set_xlabel("")
+        ax3.set_ylabel(unit_label)
+        ax3.set_title(f"{metric_label} — {country} — {chosen_day.isoformat()}")
+        ax3.tick_params(axis='x', rotation=45)
+        plt.tight_layout()
+        st.pyplot(fig3)
 
 # Notes
 st.markdown(
@@ -318,14 +456,13 @@ st.markdown(
 - File name must be exactly `RESULT_OVERVIEW_CAPACITY_MARKET_FCR_YYYY.xlsx`.
 - Country-specific columns follow these patterns (prefix is the country code or full name, e.g., `AT`, `AUSTRIA`, `BE`, …):
   - **Price**: `CC_SETTLEMENTCAPACITY_PRICE_[EUR/MW]`
-  - **Demand**: `CC_DEMAND_[MW]`
   - **Import(−)/Export(+)** (both supported):
     - `CC_IMPORT(-)_EXPORT(+)_[MW]`
     - `CC_DEFICIT(-)_SURPLUS(+)_[MW]`
-- The heatmap shows monthly **average values** per `PRODUCTNAME`.  
-  If `PRODUCTNAME` is missing in your file, the app will aggregate into a single bucket **ALL**.
-- Import(−)/Export(+) uses a diverging colormap centered at 0:
-  - **Blue** = Import / Deficit (negative)
-  - **Red** = Export / Surplus (positive)
+  - **Demand** (for the all-countries bar chart): `CC_DEMAND_[MW]`
+- **CROSSBORDER**/**CROSS-BORDER** is excluded from countries and from the Demand chart.
+- Heatmap shows **monthly averages** by `PRODUCTNAME`.
+- Specific-day bar chart shows **daily mean per product** (not monthly averages).  
+  If you prefer sum or a specific intraday slice, let me know.
 """
 )
