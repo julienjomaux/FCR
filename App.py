@@ -318,6 +318,7 @@ def get_config_value(key: str, default: Optional[str] = None) -> Optional[str]:
 stripe_link = get_config_value('STRIPE_CHECKOUT_LINK', '#')
 secret_password = get_config_value('SECRET_PASSWORD', '')
 
+# --- Signup callout with hyperlink to secret STRIPE_CHECKOUT_LINK ---
 st.markdown(
     f"""
     If you want to access all the apps of GEM Energy Analytics, please sign up following the link below. 
@@ -432,10 +433,19 @@ else:
                 ax=ax
             )
 
-            # ----- Watermark banner on the heatmap -----
-            ax.text(0.5, 0.5, "gemenergyanalytics.substack.com - Julien Jomaux",
-                    color='gray', fontsize=40, alpha=0.3, ha='center', va='center',
-                    rotation=30, transform=ax.transAxes, zorder=1)
+            # ----- Watermark banner on the heatmap (two lines, slightly smaller) -----
+            ax.text(
+                0.5, 0.5,
+                "gemenergyanalytics.substack.com\nJulien Jomaux",
+                color='gray',
+                fontsize=32,      # slightly smaller than before (was 40)
+                alpha=0.3,
+                ha='center',
+                va='center',
+                rotation=30,
+                transform=ax.transAxes,
+                zorder=1
+            )
 
             ax.set_xticks([i + 0.5 for i in range(len(heatmap_data.columns))])
             ax.set_xticklabels(x_labels_bins, rotation=45, ha='right')
