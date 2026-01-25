@@ -11,7 +11,7 @@ import matplotlib.pyplot as plt
 from calendar import month_abbr
 
 # ---------------- Page setup ----------------
-st.set_page_config(page_title="FCR — Price Heatmap", layout="wide")
+st.set_page_config(page_title="FCR — Price Heatmap", layout="wide", page_icon="GEM.webp")
 
 # Years you want to expose in the UI (adapt if you add more files)
 YEARS = [2021, 2022, 2023, 2024, 2025]
@@ -534,6 +534,7 @@ else:
             st.pyplot(fig3)
 
     
+
 
 
 
