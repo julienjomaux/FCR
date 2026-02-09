@@ -260,9 +260,13 @@ You can change the considered country and the year easily.
 
 **Data source:** Regelleistung.net
 
-**More insights:** GEM Energy Analytics  
+**More insights:** [GEM Energy Analytics](https://gemenergyanalytics.substack.com/)  
 **Connect with me:** Julien Jomaux  
 **Email me:** julien.jomaux@gmail.com
+
+If you want to support, please consider becoming a paying member of GEM Energy Analytics. 
+
+Thanks for reading [GEM Energy Analytics](https://gemenergyanalytics.substack.com/).
 """
 )
 
@@ -400,3 +404,4 @@ else:
     ax3.tick_params(axis='x', rotation=45)
     plt.tight_layout()
     st.pyplot(fig3)
+
